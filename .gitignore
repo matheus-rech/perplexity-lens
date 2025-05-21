@@ -1,5 +1,8 @@
 # Dependency directories
 node_modules/
+src/config.ts
+src/config.ts.local
+
 
 # Build output
 dist/
