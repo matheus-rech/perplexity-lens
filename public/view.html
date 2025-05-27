@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shared Knowledge Graph - Perplexity Lens</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .header h1 {
+      color: #333;
+      margin: 0;
+    }
+    
+    .header p {
+      color: #666;
+      margin: 5px 0 0 0;
+    }
+    
+    #graph-container {
+      width: 100%;
+      height: 70vh;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+    }
+    
+    .loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+      font-size: 18px;
+      color: #666;
+    }
+    
+    .error {
+      color: #d32f2f;
+      text-align: center;
+      padding: 20px;
+      background: #ffebee;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    
+    .controls {
+      text-align: center;
+      margin-top: 15px;
+    }
+    
+    .controls button {
+      background: #1976d2;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin: 0 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    
+    .controls button:hover {
+      background: #1565c0;
+    }
+    
+    .controls button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 15px 0;
+      color: #1976d2;
+    }
+    
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 30px;
+      margin: 15px 0;
+      font-size: 14px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 Shared Knowledge Graph</h1>
+    <p>Interactive visualization from Perplexity Lens</p>
+  </div>
+  
+  <div id="error-container"></div>
+  <div id="info-container"></div>
+  
+  <div id="graph-container">
+    <div class="loading" id="loading">
+      Loading shared knowledge graph...
+    </div>
+  </div>
+  
+  <div id="stats-container"></div>
+  
+  <div class="controls">
+    <button onclick="resetZoom()" id="reset-btn" disabled>Reset View</button>
+    <button onclick="downloadGraph()" id="download-btn" disabled>Download Data</button>
+    <button onclick="copyLink()" id="copy-btn">Copy Link</button>
+  </div>
+
+  <!-- Include Firebase and D3 -->
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  
+  <script>
+    // Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyD66NOBXyW921_zH0pOv8qFvP8yCCRh9S8",
+      authDomain: "perplexity-lens.firebaseapp.com",
+      projectId: "perplexity-lens",
+      storageBucket: "perplexity-lens.firebasestorage.app",
+      messagingSenderId: "704960135580",
+      appId: "1:704960135580:web:c89f6f39d11d7de6824859",
+      measurementId: "G-GFP18YBJHK"
+    };
+    
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    
+    let currentGraphData = null;
+    let simulation = null;
+    let svg = null;
+    let container = null;
+    let zoom = null;
+    
+    // Get graph ID from URL parameters
+    function getGraphId() {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('id');
+    }
+    
+    // Load and display the graph
+    async function loadGraph() {
+      const graphId = getGraphId();
+      
+      if (!graphId) {
+        showError('No graph ID provided in the URL. Please check the link and try again.');
+        return;
+      }
+      
+      try {
+        const doc = await db.collection('graphs').doc(graphId).get();
+        
+        if (!doc.exists) {
+          showError('Graph not found. It may have been deleted or the link is invalid.');
+          return;
+        }
+        
+        const data = doc.data();
+        currentGraphData = {
+          nodes: data.nodes || [],
+          edges: data.edges || []
+        };
+        
+        showInfo(`Graph shared on ${new Date(data.createdAt).toLocaleString()}`);
+        showStats(currentGraphData.nodes.length, currentGraphData.edges.length);
+        renderGraph(currentGraphData);
+        
+        // Enable buttons
+        document.getElementById('reset-btn').disabled = false;
+        document.getElementById('download-btn').disabled = false;
+        
+      } catch (error) {
+        console.error('Error loading graph:', error);
+        showError('Failed to load the graph. Please try again later.');
+      }
+    }
+    
+    function showError(message) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error-container').innerHTML = `<div class="error">${message}</div>`;
+    }
+    
+    function showInfo(message) {
+      document.getElementById('info-container').innerHTML = `<div class="info">${message}</div>`;
+    }
+    
+    function showStats(nodeCount, edgeCount) {
+      document.getElementById('stats-container').innerHTML = `
+        <div class="stats">
+          <span><strong>${nodeCount}</strong> concepts</span>
+          <span><strong>${edgeCount}</strong> connections</span>
+        </div>
+      `;
+    }
+    
+    function renderGraph(graphData) {
+      document.getElementById('loading').style.display = 'none';
+      
+      if (!graphData || graphData.nodes.length === 0) {
+        showError('This knowledge graph is empty.');
+        return;
+      }
+      
+      const containerElement = document.getElementById('graph-container');
+      const width = containerElement.clientWidth;
+      const height = containerElement.clientHeight;
+      
+      // Clear any existing content
+      containerElement.innerHTML = '';
+      
+      // Create SVG
+      svg = d3.select('#graph-container')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+      
+      container = svg.append('g');
+      
+      // Define zoom behavior
+      zoom = d3.zoom()
+        .scaleExtent([0.1, 4])
+        .on('zoom', (event) => {
+          container.attr('transform', event.transform);
+        });
+      
+      svg.call(zoom);
+      
+      // Center the view initially
+      svg.call(
+        zoom.transform,
+        d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8)
+      );
+      
+      // Create force simulation
+      simulation = d3.forceSimulation()
+        .force('link', d3.forceLink().id(d => d.id).distance(80))
+        .force('charge', d3.forceManyBody().strength(-150))
+        .force('center', d3.forceCenter(0, 0))
+        .force('collision', d3.forceCollide().radius(40));
+      
+      // Scales for node and edge sizing
+      const frequencyExtent = d3.extent(graphData.nodes, d => d.frequency) || [1, 1];
+      const nodeScale = d3.scaleLinear()
+        .domain(frequencyExtent)
+        .range([5, 15]);
+      
+      const weightExtent = d3.extent(graphData.edges, d => d.weight) || [1, 1];
+      const edgeScale = d3.scaleLinear()
+        .domain(weightExtent)
+        .range([1, 5]);
+      
+      // Create edges
+      const links = container.append('g')
+        .selectAll('line')
+        .data(graphData.edges)
+        .enter()
+        .append('line')
+        .attr('stroke', d => d.id.includes('semantic') ? '#5a9' : '#999')
+        .attr('stroke-opacity', 0.8)
+        .attr('stroke-width', d => edgeScale(d.weight));
+      
+      // Create nodes
+      const nodes = container.append('g')
+        .selectAll('g')
+        .data(graphData.nodes)
+        .enter()
+        .append('g')
+        .call(d3.drag()
+          .on('start', dragStarted)
+          .on('drag', dragging)
+          .on('end', dragEnded)
+        );
+      
+      // Add circles to nodes
+      nodes.append('circle')
+        .attr('r', d => nodeScale(d.frequency))
+        .attr('fill', '#69b3a2')
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 1.5);
+      
+      // Add text labels
+      nodes.append('text')
+        .text(d => d.text)
+        .attr('dx', 12)
+        .attr('dy', '.35em')
+        .style('font-size', '10px')
+        .style('fill', '#333');
+      
+      // Add tooltips
+      nodes.append('title')
+        .text(d => `${d.text}\nFrequency: ${d.frequency}\nLast selected: ${new Date(d.lastSelected).toLocaleString()}`);
+      
+      // Update positions on simulation tick
+      simulation.nodes(graphData.nodes).on('tick', () => {
+        links
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        
+        nodes
+          .attr('transform', d => `translate(${d.x},${d.y})`);
+      });
+      
+      // Setup link forces
+      simulation.force('link').links(graphData.edges);
+      
+      // Drag functions
+      function dragStarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+      
+      function dragging(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+      }
+      
+      function dragEnded(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+    }
+    
+    // Control functions
+    function resetZoom() {
+      if (svg && zoom) {
+        const containerElement = document.getElementById('graph-container');
+        const width = containerElement.clientWidth;
+        const height = containerElement.clientHeight;
+        
+        svg.transition()
+          .duration(750)
+          .call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8));
+      }
+    }
+    
+    function downloadGraph() {
+      if (currentGraphData) {
+        const dataStr = JSON.stringify(currentGraphData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `knowledge-graph-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    }
+    
+    function copyLink() {
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        const btn = document.getElementById('copy-btn');
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.background = '#4caf50';
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.background = '#1976d2';
+        }, 2000);
+      }).catch(err => {
+        console.error('Failed to copy link:', err);
+        alert('Failed to copy link to clipboard');
+      });
+    }
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      if (currentGraphData) {
+        renderGraph(currentGraphData);
+      }
+    });
+    
+    // Load the graph when page loads
+    document.addEventListener('DOMContentLoaded', loadGraph);
+  </script>
+</body>
+</html> 

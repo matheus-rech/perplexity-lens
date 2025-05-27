@@ -52,6 +52,7 @@ module.exports = {
       patterns: [
         { from: "public/manifest.json", to: "manifest.json" },
         { from: "public/icons", to: "icons", noErrorOnMissing: true },
+        { from: "public/view.html", to: "view.html" },
         { from: "src/config.ts", to: "config.js" }
       ],
     }),
